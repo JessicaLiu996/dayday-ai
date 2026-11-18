@@ -1,3 +1,4 @@
 import {publicState} from '../../../lib/news-store';
+import {publicStateResponse} from '../../../lib/public-state-http.mjs';
 export const dynamic='force-dynamic';
-export async function GET(){return Response.json(await publicState(),{headers:{'Cache-Control':'public, max-age=60, stale-while-revalidate=120'}});}
+export async function GET(request:Request){return publicStateResponse(request,publicState);}

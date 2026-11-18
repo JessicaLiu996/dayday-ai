@@ -11,6 +11,7 @@ import AboutPanel from './about-panel';
 import FeedbackPanel from './feedback-panel';
 import DistributionPanel from './distribution-panel';
 import TodayHot,{EventScore} from './today-hot';
+import {usePublicState} from './use-public-state';
 type Story=NewsState['stories'][number];
 type View='news'|'daily'|'weekly'|'topics'|'saved'|'following'|'settings'|'ranking'|'agent'|'about'|'feedback';
 const groups=[{label:'资讯阅读',items:[['news','今日热点',Newspaper],['daily','每日简报',BookOpen],['weekly','周报',CalendarDays],['topics','主题',Layers],['saved','收藏',Bookmark]]},{label:'节目订阅',items:[['following','我的关注',Radio],['settings','提醒设置',Bell]]},{label:'模型',items:[['ranking','模型榜单',Trophy]]},{label:'更多',items:[['agent','Agent 接入',Plug],['about','关于',Info],['feedback','反馈',MessageSquare]]}] as const;
@@ -19,8 +20,10 @@ const dateText=(iso:string)=>new Date(iso).toLocaleString('zh-CN',{timeZone:'Asi
 const updateText=(iso:string)=>{const date=new Date(iso);if(!Number.isFinite(date.getTime()))return '暂无更新时间';const parts=Object.fromEntries(new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(date).map(p=>[p.type,p.value]));return `${parts.month}/${parts.day} ${parts.hour}:${parts.minute}更新`;};
 function sourceStatus(source:NewsState['sources'][number],data:NewsState){const check=data.health.find(h=>h.id===source.id);if(source.adapter==='directory')return '待接入';if(!check)return '待核验';if(!check.ok)return '更新异常';if(Date.now()-Date.parse(check.checkedAt)>48*3600000)return '待刷新';return check.count===0?'已接通 · 暂无相关内容':'已接通';}
 function loadSaved():Story[]{try{const raw=JSON.parse(localStorage.getItem('dayday-bookmarks-v1')||'[]');return Array.isArray(raw)?raw.filter(s=>s&&typeof s.id==='string'&&typeof s.title==='string'&&/^https?:\/\//.test(s.url)):[];}catch{return [];}}
-export default function Dashboard({initial}:{initial:NewsState}){
- const [data,setData]=useState(initial),[view,setView]=useState<View>('news'),[topic,setTopic]=useState('全部'),[query,setQuery]=useState(''),[source,setSource]=useState('all'),[language,setLanguage]=useState('all'),[subtype,setSubtype]=useState('全部类型'),[sort,setSort]=useState('score'),[limit,setLimit]=useState(25),[saved,setSaved]=useState<Story[]>([]),[selected,setSelected]=useState<Story|null>(null),[showSources,setShowSources]=useState(false),[mobile,setMobile]=useState(false),[dark,setDark]=useState(false),[notice,setNotice]=useState(''),[refreshing,setRefreshing]=useState(false);
+export default function Dashboard(){
+ const [view,setView]=useState<View>('news'),[topic,setTopic]=useState('全部'),[query,setQuery]=useState(''),[source,setSource]=useState('all'),[language,setLanguage]=useState('all'),[subtype,setSubtype]=useState('全部类型'),[sort,setSort]=useState('score'),[limit,setLimit]=useState(25),[saved,setSaved]=useState<Story[]>([]),[selected,setSelected]=useState<Story|null>(null),[showSources,setShowSources]=useState(false),[mobile,setMobile]=useState(false),[dark,setDark]=useState(false),[notice,setNotice]=useState('');
+ const stateView=view==='news'?'home':view==='saved'?'topics':['daily','weekly','topics','about'].includes(view)?view as 'daily'|'weekly'|'topics'|'about':null;
+ const {data,ready,error,refreshing,refresh}=usePublicState(stateView);
  const dialog=useRef<HTMLDialogElement>(null),lastPage=useRef<View>('news');
  const [editionDate,setEditionDate]=useState('');
  useEffect(()=>{if(view!=='feedback')lastPage.current=view;},[view]);
@@ -29,12 +32,11 @@ export default function Dashboard({initial}:{initial:NewsState}){
  useEffect(()=>{if(selected)dialog.current?.showModal();else dialog.current?.close();},[selected]);
  useEffect(()=>{if(!notice)return;const id=setTimeout(()=>setNotice(''),4000);return()=>clearTimeout(id);},[notice]);
  useEffect(()=>{setLimit(25);},[query,source,language,topic,view,subtype]);
- async function refresh(){setRefreshing(true);try{const r=await fetch('/api/state',{cache:'no-store'});if(!r.ok)throw Error();setData(await r.json());setNotice('已读取最新内容');}catch{setNotice('暂时无法刷新，仍可阅读已加载内容');}finally{setRefreshing(false);}}
  function go(next:View){setView(next);setSort(next==='topics'?'time':'score');location.hash=next;setQuery('');setSource('all');setLanguage('all');setSubtype('全部类型');setShowSources(false);setMobile(false);setSelected(null);setLimit(25);window.scrollTo({top:0});}
  function toggleSave(story:Story){const next=saved.some(s=>s.id===story.id)?saved.filter(s=>s.id!==story.id):[story,...saved];try{localStorage.setItem('dayday-bookmarks-v1',JSON.stringify(next));setSaved(next);}catch{setNotice('浏览器存储不可用，收藏未保存');}}
  const relevantSources=useMemo(()=>data.sources.filter(s=>s.scope!=='截图栏目'&&(view!=='topics'||topic==='全部'||s.section===topic||data.stories.some(e=>e.tags.includes(topic)&&e.links.some(l=>l.sourceId===s.id)))),[data,view,topic]);
  const sourceGroups=[...new Map(relevantSources.map(s=>[s.publisher,{id:s.publisher,name:data.sources.find(x=>x.id===s.publisher)?.name||s.name}])).values()];
- const filtered=useMemo(()=>{return (view==='saved'?saved:data.stories).filter(s=>{
+ const filtered=useMemo(()=>{return (view==='saved'?saved:[]).filter(s=>{
  if(view==='topics'&&topic!=='全部'&&!s.tags.includes(topic))return false;
  if(source!=='all'&&!s.links.some(l=>l.sourceId===source||data.sources.find(x=>x.id===l.sourceId)?.publisher===source))return false;
  if(language!=='all'&&s.language!==language)return false;
@@ -50,7 +52,9 @@ export default function Dashboard({initial}:{initial:NewsState}){
  {view!=='daily'&&view!=='weekly'&&view!=='ranking'&&<div className="heading"><h1>{view==='feedback'?'说说你的想法':labels[view]}</h1><div className="heading-actions">{view==='news'?<time className="news-updated-at" dateTime={data.collectedAt}>{updateText(data.collectedAt)}</time>:isReading&&view!=='topics'&&<><button className="text-button" onClick={()=>setShowSources(!showSources)}>{showSources?'返回资讯':'信息源'}</button><button className="icon-button" aria-label="刷新资讯" disabled={refreshing} onClick={refresh}><RefreshCw size={18} className={refreshing?'spinning':''}/></button></>}</div></div>}
  {view==='news'&&<p className="positioning">过去24小时，值得你知道的 AI 大事</p>}
  {view==='topics'&&<nav className="category-tabs" aria-label="主题分类">{['全部',...data.topics].map(t=><button key={t} className={topic===t?'selected':''} onClick={()=>{setTopic(t);setSource('all');setSubtype('全部类型');setShowSources(false);}}>{t}</button>)}</nav>}
- {isReading&&<>
+ {stateView&&!ready&&<div className="empty bordered" role={error?'alert':'status'}><h2>{error||'正在加载内容…'}</h2>{error&&<button className="secondary" onClick={refresh} disabled={refreshing}>重新加载</button>}</div>}
+ {stateView&&ready&&error&&<div role="alert"><p>{error}，当前仍显示已加载内容。</p><button className="secondary" onClick={refresh} disabled={refreshing}>重新加载</button></div>}
+ {isReading&&ready&&<>
  {view==='daily'||view==='weekly'?<DailyBrief key={`${view}:${editionDate}`} data={data} period={view} initialDate={editionDate}/>:showSources&&view!=='news'?<><div className="filter-row"><label className="search"><Search size={18}/><input aria-label="搜索信息源" placeholder="搜索信息源" value={query} onChange={e=>setQuery(e.target.value)}/></label></div>{sourceRows()}</>:view==='topics'?<TopicBrowser key={`${topic}:${source}`} data={data} category={topic} initialPublisher={source==='all'?undefined:source} saved={saved} onSelect={setSelected} onSave={toggleSave}/>:view==='news'?<TodayHot data={data} saved={saved} onSelect={setSelected} onSave={toggleSave}/>:<>
  <div className="reading-layout"><section className="feed">
  <div className="filter-row"><label className="search"><Search size={18}/><input type="search" aria-label="搜索资讯" placeholder="搜索资讯" value={query} onChange={e=>setQuery(e.target.value)}/></label><select aria-label="筛选来源" value={source} onChange={e=>setSource(e.target.value)}><option value="all">全部来源</option>{sourceGroups.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select><select aria-label="筛选语言" value={language} onChange={e=>setLanguage(e.target.value)}><option value="all">全部语言</option><option value="zh">中文</option><option value="en">英文</option></select><select aria-label="排序方式" value={sort} onChange={e=>setSort(e.target.value)}><option value="score">重要优先</option><option value="time">时间优先</option></select></div>
@@ -60,7 +64,7 @@ export default function Dashboard({initial}:{initial:NewsState}){
  </>}
  {view!=='news'&&view!=='daily'&&view!=='weekly'&&view!=='topics'&&view!=='ranking'&&<footer className="page-footer"><span>最近采集 {dateText(data.collectedAt)}</span><span>{data.pipeline.mode}</span></footer>}
  </>}
- {view==='about'&&<AboutPanel data={data} onBrowse={()=>go('news')} onSources={()=>{go('topics');setShowSources(true);}}/>}
+ {view==='about'&&ready&&<AboutPanel data={data} onBrowse={()=>go('news')} onSources={()=>{go('topics');setShowSources(true);}}/>}
  {(view==='following'||view==='settings')&&<SubscriptionPanel view={view}/>}
  {view==='ranking'&&<ModelLeaderboard/>}
  {view==='agent'&&<DistributionPanel/>}
